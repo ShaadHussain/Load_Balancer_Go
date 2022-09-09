@@ -1,112 +1,72 @@
-package loadbalancergo
+package main
 
 import (
-	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"sync"
-	"sync/atomic"
-	"time"
+	"os"
 )
 
-type Backend struct {
-	URL          *url.URL
-	Alive        bool
-	mux          sync.RWMutex
-	ReverseProxy *httputil.ReverseProxy
+type Server interface {
+	Address() string
+	IsAlive() bool
+	Serve(rw http.ResponseWriter, r *http.Request)
 }
 
-type ServerPool struct {
-	backends []*Backend
-	current  uint64
+type simpleServer struct {
+	addr  string
+	proxy httputil.ReverseProxy
 }
 
-func (s *ServerPool) NextIndex() int {
-	return int(atomic.AddUint64(&s.current, uint64(1)) % uint64(len(s.backends)))
-}
+func newSimpleServer(addr string) *simpleServer {
 
-func (b *Backend) SetAlive(alive bool) {
-	b.mux.Lock()
-	b.Alive = alive
-	b.mux.Unlock()
-}
+	serverUrl, err := url.Parse(addr)
 
-func (b *Backend) IsAlive() (alive bool) {
-	b.mux.RLock()
-	alive = b.Alive
-	b.mux.Unlock()
-	return
-}
+	handleErr(err)
 
-func (s *ServerPool) GetNextPeer() *Backend {
-	next := s.NextIndex()
-
-	l := len(s.backends) + next
-
-	for i := next; i < l; i++ {
-		idx := i % len(s.backends)
-
-		if s.backends[idx].IsAlive() {
-			if i != next {
-				atomic.StoreUint64(&s.current, uint64(idx))
-			}
-
-			return s.backends[idx]
-		}
+	return &simpleServer{
+		addr:  addr,
+		proxy: *httputil.NewSingleHostReverseProxy(serverUrl),
 	}
-	return nil
 }
 
-func lb(w http.ResponseWriter, r *http.Request) {
+type LoadBalancer struct {
+	port            string
+	roundRobinCount int
+	servers         []Server
+}
 
-	peer := serverPool.GetNextPeer()
+func NewLoadBalancer(port int, servers []Server) *LoadBalancer {
+	return &LoadBalancer{
+		port:            port,
+		roundRobinCount: 0,
+		servers:         servers,
+	}
+}
 
-	if peer != nil {
-		peer.ReverseProxy.ServeHTTP(w, r)
-		return
+func handleErr(err error) {
+	if err != nil {
+		fmt.Printf("error: %v\n", err)
 	}
 
-	http.Error(w, "Service not available", http.StatusServiceUnavailable)
-
+	os.Exit(1)
 }
 
-var serverPool ServerPool
+func (lb *LoadBalancer) getNextAvailableServer() Server {
+	// return nil
+}
+
+func (lb *LoadBalancer) serveProxy(rw http.ResponseWriter, r *http.Request) {
+
+}
 
 func main() {
-	u, _ := url.Parse("http://localhost:8080")
-
-	rp := httputil.NewSingleHostReverseProxy(u)
-
-	http.HandlerFunc(rp.ServeHTTP)
-
-	server := http.Server{
-		Addr:    fmt.Sprintf(":d", port),
-		Handler: http.HandlerFunc(lb),
+	servers := []Server{
+		newSimpleServer("https://www.facebook.com"),
+		newSimpleServer("https://www.bing.com"),
+		newSimpleServer("https://www.duckduckgo.com"),
 	}
 
-	proxy.ErrorHandler = func(writer http.ResponseWriter, request *http.Request, e error) {
-
-		log.Printf("[%s] %s\n", serverUrl.Host, e.Error())
-
-		retries := GetRetryFromContext(request)
-
-		if retries < 3 {
-			select {
-
-			case <-time.After(10 * time.Millisecond):
-				ctx := context.WithValue(request.Context(), Retry, retries+1)
-				proxy.ServeHTTP(writer, request.WithContext(ctx))
-			}
-
-			return
-		}
-	}
-
-	ServerPool.MarkBackendStatus(serverUrl, false)
-
-	attempts := GetAttemptsFromContext(request)
-
+	lb := NewLoadBalancer("8000", servers)
 }
