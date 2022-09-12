@@ -37,12 +37,22 @@ type LoadBalancer struct {
 	servers         []Server
 }
 
-func NewLoadBalancer(port int, servers []Server) *LoadBalancer {
+func NewLoadBalancer(port string, servers []Server) *LoadBalancer {
 	return &LoadBalancer{
 		port:            port,
 		roundRobinCount: 0,
 		servers:         servers,
 	}
+}
+
+func (s *simpleServer) Address() string {
+	return s.addr
+}
+
+func (s *simpleServer) IsAlive() bool { return true }
+
+func (s *simpleServer) Serve(rw http.ResponseWriter, req *http.Request) {
+	s.proxy.ServeHTTP(rw, req)
 }
 
 func handleErr(err error) {
@@ -54,11 +64,23 @@ func handleErr(err error) {
 }
 
 func (lb *LoadBalancer) getNextAvailableServer() Server {
-	// return nil
+
+	server := lb.servers[lb.roundRobinCount%len(lb.servers)]
+
+	for !server.IsAlive() {
+		lb.roundRobinCount += 1
+		server = lb.servers[lb.roundRobinCount%len(lb.servers)]
+	}
+
+	lb.roundRobinCount++
+	return server
+
 }
 
 func (lb *LoadBalancer) serveProxy(rw http.ResponseWriter, r *http.Request) {
-
+	targetServer := lb.getNextAvailableServer()
+	fmt.Printf("Forwarding request to address %q\n", targetServer.Address())
+	targetServer.Serve(rw, r)
 }
 
 func main() {
@@ -69,4 +91,14 @@ func main() {
 	}
 
 	lb := NewLoadBalancer("8000", servers)
+	handleRedirect := func(rw http.ResponseWriter, r *http.Request) {
+		lb.serveProxy(rw, r)
+	}
+
+	http.HandleFunc("/", handleRedirect)
+
+	fmt.Printf("Serving requests at localhost:%s", lb.port)
+
+	http.ListenAndServe(":"+lb.port, nil)
+
 }
